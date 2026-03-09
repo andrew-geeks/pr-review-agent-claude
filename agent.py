@@ -5,7 +5,6 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-import re
 import anthropic
 
 # 1. Configuration & Setup
@@ -76,31 +75,6 @@ def parse_diff_by_file(full_diff):
                 
     return files_diffs
 
-
-def get_actual_line_number(file_diff, ai_line_number):
-    """Maps the AI's line number (from the diff text) to the actual file line number."""
-    current_actual_line = 0
-    diff_lines = file_diff.split('\n')
-    
-    for i, line in enumerate(diff_lines):
-        # Find hunk headers like @@ -15,7 +15,9 @@
-        hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', line)
-        if hunk_match:
-            # Set our counter to the start of the new hunk (-1 because we add 1 below)
-            current_actual_line = int(hunk_match.group(1)) - 1
-            continue
-            
-        # If it's an added line or an unchanged context line, increment the real line counter
-        if line.startswith('+') and not line.startswith('+++'):
-            current_actual_line += 1
-        elif line.startswith(' '):
-            current_actual_line += 1
-            
-        # If the diff string line index matches the AI's reported line number (1-indexed)
-        if (i + 1) == ai_line_number:
-            return current_actual_line
-            
-    return ai_line_number # Fallback
 
 def load_domain_knowledge_skill():
     """Skill: Loads project-specific rules from a local Markdown file."""
@@ -201,10 +175,7 @@ if __name__ == "__main__":
             recommendations = review_code_with_claude(diff_content, domain_knowledge)
 
             for rec in recommendations:
-                ai_line = rec.get('line')
+                line = rec.get('line')
                 message = rec.get('message')
 
-                # Convert the AI's line number to the real file's line number
-                real_line = get_actual_line_number(diff_content, ai_line)
-
-                post_inline_comment(repo, pr_number, commit_sha, file_path, real_line, message)
+                post_inline_comment(repo, pr_number, commit_sha, file_path, line, message)

@@ -27,7 +27,7 @@ def run_demo() -> None:  # does not follow the `func_` prefix rule
     nums = [1, 2, 3, 4, 5, 6]
     print("Add:", func_add(3, 7))
     print("Even numbers:", func_filter_even(nums))
-    print("Multiply:", multiply(4, 5))
+    print("Multiply:", func_multiply(4, 5))
     print("Greeting:", greet("Andrew"))
     print("Average:", func_average([10.0, 20.0, 30.0]))
 

@@ -77,6 +77,17 @@ def parse_diff_by_file(full_diff):
     return files_diffs
 
 
+def get_file_content(repo, file_path, commit_sha):
+    """Fetches the full content of a file at a specific commit from GitHub."""
+    import base64
+    url = f"{GITHUB_API_BASE}/repos/{repo}/contents/{file_path}?ref={commit_sha}"
+    response = requests.get(url, headers=GITHUB_HEADERS)
+    if response.status_code == 200:
+        return base64.b64decode(response.json()["content"]).decode("utf-8")
+    print(f"⚠️ Could not fetch full file content for {file_path}: {response.status_code}")
+    return None
+
+
 def load_domain_knowledge_skill():
     """Skill: Loads project-specific rules from a local Markdown file."""
     for rule_file in ("DOMAIN_RULES.md", "skills.md"):
@@ -86,23 +97,33 @@ def load_domain_knowledge_skill():
     return "No specific domain rules found for this project."
 
 
-def review_code_with_claude(code_content, domain_knowledge):
+def review_code_with_claude(code_content, domain_knowledge, full_file_content=None):
     """Sends code to Claude and parses the JSON review recommendations."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     message = client.messages.create(
         model=MODEL_ID,
-        max_tokens=4096,
+        max_tokens=8096, 
         system=(
             "You are a Senior Developer. Use the following project-specific "
             f"domain rules to guide your review:\n\n{domain_knowledge}\n\n"
-            "Review the code for these rules and general best practices. "
-            "Output ONLY a valid JSON list of objects: [{\"line\": int, \"message\": \"string\"}]"
+            "Review the code diff and for each issue found, provide feedback across these three areas:\n"
+            "1. **Guideline violations**: Does the code violate any of the project-specific domain rules?\n"
+            "2. **Correctness**: Will this code actually work as intended? Look for logic errors, wrong assumptions, incorrect data types, off-by-one errors, etc.\n"
+            "3. **Failure risks**: What could cause this code to fail at runtime? Consider null/None values, missing error handling, edge cases, external dependency failures, race conditions, etc.\n\n"
+            "Output ONLY a valid JSON list of objects: "
+            "[{\"line\": int, \"category\": \"guideline|correctness|failure_risk|conflict\", \"severity\": \"error|warning|info\", \"message\": \"string\"}]"
         ),
         messages=[
             {
                 "role": "user",
-                "content": f"Review this code change:\n{code_content}"
+                "content": (
+                    f"Here is the FULL current file for context:\n```\n{full_file_content}\n```\n\n"
+                    f"Here is the DIFF (the new changes being reviewed):\n{code_content}\n\n"
+                    "Also check if the new changes conflict with or break any existing code in the full file "
+                    "(e.g. renamed functions still called by old name, type mismatches, removed variables still referenced, etc.). "
+                    "Use category=\"conflict\" for such issues."
+                ) if full_file_content else f"Review this code change:\n{code_content}"
             }
         ],
         temperature=0,
@@ -173,10 +194,13 @@ if __name__ == "__main__":
 
         for file_path, diff_content in file_map.items():
             print(f"🤖 Reviewing: {file_path}")
-            recommendations = review_code_with_claude(diff_content, domain_knowledge)
+            full_file_content = get_file_content(repo, file_path, commit_sha)
+            recommendations = review_code_with_claude(diff_content, domain_knowledge, full_file_content)
 
             for rec in recommendations:
                 line = rec.get('line')
-                message = rec.get('message')
+                category = rec.get('category', 'guideline').upper()
+                severity = rec.get('severity', 'info').upper()
+                message = f"[{severity}] [{category}] {rec.get('message')}"
 
                 post_inline_comment(repo, pr_number, commit_sha, file_path, line, message)

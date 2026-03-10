@@ -13,7 +13,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")  # format: "owner/repo" (auto-set in GitHub Actions)
 MODEL_ID = "claude-sonnet-4-6"
-ALLOWED_EXTENSIONS = {'.py', '.txt', '.md', '.json'}
+ALLOWED_EXTENSIONS = {'.py', '.sql', '.java'} # add extensions of those files you want to review
+EXCLUDED_FILES = {'agent.py'} # add specific files to exclude from review.
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_HEADERS = {
     "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -69,8 +70,8 @@ def parse_diff_by_file(full_diff):
                 break
         
         if filename:
-            # Check if it's a file type we want to review
-            if any(filename.endswith(ext) for ext in ALLOWED_EXTENSIONS):
+            # Check if it's a file type we want to review and not excluded
+            if any(filename.endswith(ext) for ext in ALLOWED_EXTENSIONS) and filename not in EXCLUDED_FILES:
                 files_diffs[filename] = chunk
                 
     return files_diffs

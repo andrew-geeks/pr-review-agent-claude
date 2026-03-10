@@ -5,7 +5,6 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-import re
 import anthropic
 
 # 1. Configuration & Setup
@@ -13,9 +12,16 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")  # format: "owner/repo" (auto-set in GitHub Actions)
-MODEL_ID = "claude-sonnet-4-6"
-ALLOWED_EXTENSIONS = {'.py', '.txt', '.md', '.json'}
-GITHUB_API_BASE = "https://api.github.com"
+
+with open(os.path.join(os.path.dirname(__file__), "config.json"), "r") as _f:
+    _config = json.load(_f)
+
+MODEL_ID = _config["model_id"]
+ALLOWED_EXTENSIONS = set(_config["allowed_extensions"])
+EXCLUDED_FILES = set(_config["excluded_files"])
+GITHUB_API_BASE = _config["github_api_base"]
+MAX_TOKENS = _config["max_tokens"]
+
 GITHUB_HEADERS = {
     "Authorization": f"Bearer {GITHUB_TOKEN}",
     "Accept": "application/vnd.github+json",
@@ -70,37 +76,23 @@ def parse_diff_by_file(full_diff):
                 break
         
         if filename:
-            # Check if it's a file type we want to review
-            if any(filename.endswith(ext) for ext in ALLOWED_EXTENSIONS):
+            # Check if it's a file type we want to review and not excluded
+            if any(filename.endswith(ext) for ext in ALLOWED_EXTENSIONS) and filename not in EXCLUDED_FILES:
                 files_diffs[filename] = chunk
                 
     return files_diffs
 
 
-def get_actual_line_number(file_diff, ai_line_number):
-    """Maps the AI's line number (from the diff text) to the actual file line number."""
-    current_actual_line = 0
-    diff_lines = file_diff.split('\n')
-    
-    for i, line in enumerate(diff_lines):
-        # Find hunk headers like @@ -15,7 +15,9 @@
-        hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@', line)
-        if hunk_match:
-            # Set our counter to the start of the new hunk (-1 because we add 1 below)
-            current_actual_line = int(hunk_match.group(1)) - 1
-            continue
-            
-        # If it's an added line or an unchanged context line, increment the real line counter
-        if line.startswith('+') and not line.startswith('+++'):
-            current_actual_line += 1
-        elif line.startswith(' '):
-            current_actual_line += 1
-            
-        # If the diff string line index matches the AI's reported line number (1-indexed)
-        if (i + 1) == ai_line_number:
-            return current_actual_line
-            
-    return ai_line_number # Fallback
+def get_file_content(repo, file_path, commit_sha):
+    """Fetches the full content of a file at a specific commit from GitHub."""
+    import base64
+    url = f"{GITHUB_API_BASE}/repos/{repo}/contents/{file_path}?ref={commit_sha}"
+    response = requests.get(url, headers=GITHUB_HEADERS)
+    if response.status_code == 200:
+        return base64.b64decode(response.json()["content"]).decode("utf-8")
+    print(f"⚠️ Could not fetch full file content for {file_path}: {response.status_code}")
+    return None
+
 
 def load_domain_knowledge_skill():
     """Skill: Loads project-specific rules from a local Markdown file."""
@@ -111,23 +103,33 @@ def load_domain_knowledge_skill():
     return "No specific domain rules found for this project."
 
 
-def review_code_with_claude(code_content, domain_knowledge):
+def review_code_with_claude(code_content, domain_knowledge, full_file_content=None):
     """Sends code to Claude and parses the JSON review recommendations."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     message = client.messages.create(
         model=MODEL_ID,
-        max_tokens=4096,
+        max_tokens=MAX_TOKENS,
         system=(
             "You are a Senior Developer. Use the following project-specific "
             f"domain rules to guide your review:\n\n{domain_knowledge}\n\n"
-            "Review the code for these rules and general best practices. "
-            "Output ONLY a valid JSON list of objects: [{\"line\": int, \"message\": \"string\"}]"
+            "Review the code diff and for each issue found, provide feedback across these three areas:\n"
+            "1. **Guideline violations**: Does the code violate any of the project-specific domain rules?\n"
+            "2. **Correctness**: Will this code actually work as intended? Look for logic errors, wrong assumptions, incorrect data types, off-by-one errors, etc.\n"
+            "3. **Failure risks**: What could cause this code to fail at runtime? Consider null/None values, missing error handling, edge cases, external dependency failures, race conditions, etc.\n\n"
+            "Output ONLY a valid JSON list of objects: "
+            "[{\"line\": int, \"category\": \"guideline|correctness|failure_risk|conflict\", \"severity\": \"error|warning|info\", \"message\": \"string\"}]"
         ),
         messages=[
             {
                 "role": "user",
-                "content": f"Review this code change:\n{code_content}"
+                "content": (
+                    f"Here is the FULL current file for context:\n```\n{full_file_content}\n```\n\n"
+                    f"Here is the DIFF (the new changes being reviewed):\n{code_content}\n\n"
+                    "Also check if the new changes conflict with or break any existing code in the full file "
+                    "(e.g. renamed functions still called by old name, type mismatches, removed variables still referenced, etc.). "
+                    "Use category=\"conflict\" for such issues."
+                ) if full_file_content else f"Review this code change:\n{code_content}"
             }
         ],
         temperature=0,
@@ -198,13 +200,13 @@ if __name__ == "__main__":
 
         for file_path, diff_content in file_map.items():
             print(f"🤖 Reviewing: {file_path}")
-            recommendations = review_code_with_claude(diff_content, domain_knowledge)
+            full_file_content = get_file_content(repo, file_path, commit_sha)
+            recommendations = review_code_with_claude(diff_content, domain_knowledge, full_file_content)
 
             for rec in recommendations:
-                ai_line = rec.get('line')
-                message = rec.get('message')
+                line = rec.get('line')
+                category = rec.get('category', 'guideline').upper()
+                severity = rec.get('severity', 'info').upper()
+                message = f"[{severity}] [{category}] {rec.get('message')}"
 
-                # Convert the AI's line number to the real file's line number
-                real_line = get_actual_line_number(diff_content, ai_line)
-
-                post_inline_comment(repo, pr_number, commit_sha, file_path, real_line, message)
+                post_inline_comment(repo, pr_number, commit_sha, file_path, line, message)

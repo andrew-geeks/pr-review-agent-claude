@@ -1,0 +1,7 @@
+{
+    "model_id": "claude-sonnet-4-6",
+    "allowed_extensions": [".py", ".sql", ".java"],
+    "excluded_files": ["agent.py"],
+    "github_api_base": "https://api.github.com",
+    "max_tokens": 8096
+}

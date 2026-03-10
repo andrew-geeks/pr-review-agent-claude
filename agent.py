@@ -12,10 +12,16 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")  # format: "owner/repo" (auto-set in GitHub Actions)
-MODEL_ID = "claude-sonnet-4-6"
-ALLOWED_EXTENSIONS = {'.py', '.sql', '.java'} # add extensions of those files you want to review
-EXCLUDED_FILES = {'agent.py'} # add specific files to exclude from review.
-GITHUB_API_BASE = "https://api.github.com"
+
+with open(os.path.join(os.path.dirname(__file__), "config.json"), "r") as _f:
+    _config = json.load(_f)
+
+MODEL_ID = _config["model_id"]
+ALLOWED_EXTENSIONS = set(_config["allowed_extensions"])
+EXCLUDED_FILES = set(_config["excluded_files"])
+GITHUB_API_BASE = _config["github_api_base"]
+MAX_TOKENS = _config["max_tokens"]
+
 GITHUB_HEADERS = {
     "Authorization": f"Bearer {GITHUB_TOKEN}",
     "Accept": "application/vnd.github+json",
@@ -103,7 +109,7 @@ def review_code_with_claude(code_content, domain_knowledge, full_file_content=No
 
     message = client.messages.create(
         model=MODEL_ID,
-        max_tokens=8096, 
+        max_tokens=MAX_TOKENS,
         system=(
             "You are a Senior Developer. Use the following project-specific "
             f"domain rules to guide your review:\n\n{domain_knowledge}\n\n"

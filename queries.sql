@@ -1,8 +1,11 @@
--- Create orders table (missing id, created_at, updated_at)
-create table orders (
-    order_ref varchar(50),
-    customer_name varchar(100),
-    total_amount decimal(10, 2)
+-- Create orders table
+CREATE TABLE orders (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    order_ref VARCHAR(50),
+    customer_name VARCHAR(100),
+    total_amount DECIMAL(10, 2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 -- Create products table (missing created_at, updated_at; keywords lowercase)

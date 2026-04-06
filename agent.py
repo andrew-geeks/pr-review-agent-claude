@@ -203,10 +203,15 @@ if __name__ == "__main__":
             full_file_content = get_file_content(repo, file_path, commit_sha)
             recommendations = review_code_with_claude(diff_content, domain_knowledge, full_file_content)
 
+            # Group issues by line number to avoid multiple comments on the same line
+            issues_by_line = {}
             for rec in recommendations:
                 line = rec.get('line')
                 category = rec.get('category', 'guideline').upper()
                 severity = rec.get('severity', 'info').upper()
                 message = f"[{severity}] [{category}] {rec.get('message')}"
+                issues_by_line.setdefault(line, []).append(message)
 
-                post_inline_comment(repo, pr_number, commit_sha, file_path, line, message)
+            for line, messages in issues_by_line.items():
+                combined_message = "\n".join(messages)
+                post_inline_comment(repo, pr_number, commit_sha, file_path, line, combined_message)

@@ -8,6 +8,7 @@ CREATE TABLE orders (
 );
 
 
+
 SELECT id, customer_name, total_amount
 FROM orders
 WHERE total_amount > 100
